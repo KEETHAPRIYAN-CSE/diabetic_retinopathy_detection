@@ -1,0 +1,32 @@
+# Model weights (large, not for git — see app/model/README.md)
+app/model/*.pt
+app/model/*.pth
+!app/model/.gitkeep
+!app/model/README.md
+
+# Sample images (optional, can be large)
+app/sample_images/*.png
+app/sample_images/*.jpg
+app/sample_images/*.jpeg
+!app/sample_images/.gitkeep
+!app/sample_images/README.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Data (don't commit the dataset)
+notebook/data/
+*.csv
+!notebook/*.ipynb

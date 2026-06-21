@@ -1,6 +1,6 @@
 # Early-Stage Diabetic Retinopathy Detection
 
-**Biothon 2026 · Marwadi University · Domain: Agriculture (Problem track) · Problem P2**
+**Domain: Agriculture (Problem track) · Problem P2**
 
 A computer vision prototype that takes a retinal fundus image and outputs:
 1. Whether diabetic retinopathy (DR) is present

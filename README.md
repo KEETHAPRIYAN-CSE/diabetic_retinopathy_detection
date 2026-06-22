@@ -1,6 +1,6 @@
 # Early-Stage Diabetic Retinopathy Detection
 
-**Biothon 2026 · Marwadi University · Domain: Agriculture (Problem track) · Problem P2**
+**Domain: Agriculture (Problem track) · Problem P2**
 
 A computer vision prototype that takes a retinal fundus image and outputs:
 1. Whether diabetic retinopathy (DR) is present
@@ -192,18 +192,10 @@ the endpoint by uploading a file directly in the browser.
 
 ---
 
-## 8. Hackathon submission checklist (Biothon 2026)
-
-- [ ] PPT covering problem statement, approach, architecture, results, demo screenshots
-- [ ] Video walkthrough of the working Streamlit app
-- [ ] This repo (notebook + app code + README) as the working prototype
-- [ ] Offline grand finale: bring laptop with `app/model/dr_model_traced.pt` already
-      in place and `pip install -r requirements.txt` already run — don't rely on
-      venue Wi-Fi for last-minute setup
 
 ---
 
-## 9. Disclaimer
+## 8. Disclaimer
 
 This is a hackathon prototype for demonstration and educational purposes only.
 It is **not** a certified or validated medical device, has not undergone clinical

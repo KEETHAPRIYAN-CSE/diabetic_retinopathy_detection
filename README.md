@@ -1,204 +1,224 @@
 # Early-Stage Diabetic Retinopathy Detection
 
-**Domain: Agriculture (Problem track) · Problem P2**
+This project is a computer-vision prototype for detecting diabetic retinopathy (DR) from retinal fundus images.
 
-A computer vision prototype that takes a retinal fundus image and outputs:
-1. Whether diabetic retinopathy (DR) is present
-2. If present, the severity grade (0–4, APTOS scale)
-3. A confidence score, with automatic flagging for manual review when the model is uncertain
+The system takes one eye image and returns:
 
-Built to run **without a GPU on demo day**: training happens once on Google Colab's
-free GPU, the trained model is downloaded, and the actual demo app runs entirely
-on a laptop CPU via Streamlit.
+1. Whether diabetic retinopathy is likely present
+2. The predicted DR severity grade from 0 to 4
+3. A confidence or uncertainty signal
+4. A manual-review warning when the model is unsure
 
----
+The current project started as an EfficientNet-B0 ordinal-regression baseline and has now been extended with a feature-engineering plan and hybrid-model training code.
 
-## 1. Project structure
-
-```
-dr-detection/
-├── README.md                      <- you are here
-├── .gitignore
-│
-├── notebook/
-│   └── train_dr_model.ipynb       <- run this FIRST, in Google Colab (needs GPU)
-│
-└── app/
-    ├── app.py                     <- Streamlit demo app (main deliverable)
-    ├── api.py                     <- optional FastAPI endpoint (same model, REST)
-    ├── inference.py                <- model loading + prediction + confidence logic
-    ├── preprocessing.py           <- Ben Graham preprocessing (shared with notebook)
-    ├── requirements.txt
-    ├── model/
-    │   ├── README.md
-    │   └── dr_model_traced.pt     <- YOU put this here after training (not in repo)
-    └── sample_images/
-        ├── README.md
-        └── (optional demo images you add)
-```
+Important: this project is for learning, research, and demo purposes only. It is not a certified medical device and must not be used for real patient diagnosis.
 
 ---
 
-## 2. How it works (architecture)
+## What is diabetic retinopathy?
 
-```
-┌─────────────────────────┐         ┌──────────────────────────────┐
-│   Google Colab (GPU)     │         │   Your laptop (CPU)           │
-│                          │         │                                │
-│  train_dr_model.ipynb    │  model  │  app.py (Streamlit)           │
-│  - APTOS dataset         │  file   │  api.py (FastAPI, optional)   │
-│  - Ben Graham preprocess │ ──────► │  - same Ben Graham preprocess │
-│  - EfficientNet-B0       │ (.pt)   │  - loads TorchScript model    │
-│    + ordinal regression  │  via    │  - outputs grade + confidence │
-│  - WeightedRandomSampler │ Google  │  - flags low-confidence cases │
-│  - saves to Drive        │ Drive   │    for manual review          │
-└─────────────────────────┘         └──────────────────────────────┘
-```
+Diabetic retinopathy is eye damage caused by diabetes. High blood sugar can damage small blood vessels in the retina. Over time, this can cause vision problems or blindness.
 
-### Key design decisions (and why)
+The model uses the APTOS-style 5-grade scale:
 
-| Decision | What we did | Why |
+| Grade | Name | Meaning |
 |---|---|---|
-| **Output type** | Ordinal regression (1 scalar), not 5-way softmax classification | DR grades are ordered. Classification treats "predicted 0, true 4" the same as "predicted 3, true 4" — both just "wrong." Regression naturally penalizes far-off predictions more, which matches clinical reality. |
-| **Preprocessing** | Ben Graham preprocessing (crop, subtract local average color, clip to circle) | APTOS images come from many different cameras with wildly inconsistent lighting/color. Without this, the model burns capacity learning to normalize cameras instead of lesions. |
-| **Class imbalance** | `WeightedRandomSampler` only | APTOS has far more Grade 0 than Grade 3–4 images. Using a weighted sampler AND a class-weighted loss at the same time double-corrects the same problem and can hurt majority-class recall. We use exactly one mechanism. |
-| **Confidence score** | Derived from distance-to-nearest-integer-grade, not a generic softmax max | A model that outputs raw value 2.02 and one that outputs 2.49 both round to "Grade 2" — but the second is sitting right on a clinical decision boundary and should be flagged, not reported with false confidence. |
-| **Backbone** | EfficientNet-B0, transfer learning from ImageNet | Good accuracy/speed tradeoff; the notebook also supports swapping to MobileNetV2 if you need even faster inference. |
-| **Demo environment** | Colab (train) → Streamlit on laptop CPU (demo) | EfficientNet-B0 CPU inference is ~500-900ms/image — too slow to retrain or do heavy live training on stage, but plenty fast for single-image inference in a demo. |
+| 0 | No DR | No visible diabetic retinopathy |
+| 1 | Mild NPDR | Small early signs, often microaneurysms |
+| 2 | Moderate NPDR | More visible lesions and retinal changes |
+| 3 | Severe NPDR | Serious non-proliferative disease |
+| 4 | Proliferative DR | Advanced disease with high vision risk |
 
 ---
 
-## 3. Prerequisites
+## Project structure
 
-- A Google account (for Colab + Google Drive)
-- A Kaggle account (to download the APTOS 2019 dataset) — free, sign up at kaggle.com
-- Python 3.9+ installed locally (for running the Streamlit app)
-- ~2 GB free space in Google Drive (for the dataset + saved model)
-
----
-
-## 4. Step-by-step: Part A — Train the model (Google Colab)
-
-1. Go to [Google Colab](https://colab.research.google.com) and upload
-   `notebook/train_dr_model.ipynb` (File → Upload notebook), or open it directly
-   from Google Drive if you've already placed it there.
-
-2. **Enable GPU**: Runtime → Change runtime type → Hardware accelerator → **T4 GPU** → Save.
-
-3. **Get a Kaggle API token** (only needed once):
-   - Go to [kaggle.com](https://www.kaggle.com) → your profile picture → Settings
-   - Scroll to "API" → click "Create New Token" — this downloads `kaggle.json`
-   - Keep this file handy; you'll upload it when the notebook asks (Section 2, Option A cell)
-
-4. **Run the cells in order, top to bottom**:
-   - **Section 1**: Mounts your Google Drive (click "Connect to Google Drive" and authorize when prompted). Creates a `biothon2026-dr-detection` folder in your Drive.
-   - **Section 2**: Downloads **only** `train.csv` + `train_images.zip` via the Kaggle API (skips the much larger `test_images.zip`, which isn't needed for training/validation). Upload your `kaggle.json` when prompted. Each image is then resized to a max dimension of 512px on extraction, which keeps the final dataset to roughly **2–4GB** on disk regardless of the original camera resolutions — a cell at the end of this section prints the actual size so you can confirm. If it comes in over 4GB, lower `MAX_DIM` (e.g. to 384) in that cell and re-run.
-   - **Section 3**: Defines and visualizes the Ben Graham preprocessing — you'll see a before/after grid across all 5 grades. Sanity-check that the processed images look reasonable (clear circular crop, no weird artifacts).
-   - **Section 4**: Builds the PyTorch datasets/dataloaders with the `WeightedRandomSampler`.
-   - **Section 5**: Defines the EfficientNet-B0 + ordinal regression model.
-   - **Section 6**: Trains for up to 20 epochs with early stopping on validation QWK (Quadratic Weighted Kappa — the standard ordinal metric for this task). Takes roughly 30-60 minutes on a T4 GPU depending on Colab load. Saves the best checkpoint to Drive automatically after every improving epoch — you can close the tab and come back, the best-so-far model is already saved.
-   - **Section 7**: Prints a classification report and confusion matrix on the held-out validation set.
-   - **Section 8**: Exports a TorchScript-traced version of the model (`dr_model_traced.pt`) to Google Drive — this is the file the local app needs.
-
-5. **Download the model file** from Google Drive:
-   - In Google Drive, navigate to `biothon2026-dr-detection/models/`
-   - Right-click `dr_model_traced.pt` → Download
-
----
-
-## 5. Step-by-step: Part B — Run the demo app locally
-
-1. **Clone/copy the project folder** to your laptop (the whole `dr-detection/` folder).
-
-2. **Place the trained model**:
-   - Move the `dr_model_traced.pt` you downloaded from Drive into:
-     ```
-     dr-detection/app/model/dr_model_traced.pt
-     ```
-
-3. **(Optional) Add demo sample images**:
-   - Grab 2-5 sample fundus images (e.g. one per grade) and drop them into
-     `dr-detection/app/sample_images/`
-   - This lets you check the "Use a bundled sample image" box during a live
-     demo instead of needing to upload a file on stage.
-
-4. **Create a virtual environment and install dependencies**:
-
-   ```bash
-   cd dr-detection/app
-   python3 -m venv venv
-
-   # On macOS/Linux:
-   source venv/bin/activate
-   # On Windows:
-   venv\Scripts\activate
-
-   pip install -r requirements.txt
-   ```
-
-5. **Run the Streamlit app**:
-
-   ```bash
-   streamlit run app.py
-   ```
-
-   This opens automatically in your browser at `http://localhost:8501`.
-
-6. **Use the app**:
-   - Upload a retinal fundus image (PNG/JPG), or check "Use a bundled sample image"
-   - Click **Run prediction**
-   - You'll see: the grade (0–4) with label, confidence %, DR present yes/no,
-     a clinical recommendation, per-grade probability bars, and — if confidence
-     is below 60% — a clear warning flagging the case for manual review
-
----
-
-## 6. (Optional) Running the FastAPI endpoint instead of / alongside Streamlit
-
-The Streamlit app is the primary demo deliverable, but a REST API is included
-too (useful if you want to show an integration point, e.g. for a future React
-frontend, or to satisfy a "working API endpoint" requirement separately from
-the UI demo).
-
-```bash
-cd dr-detection/app
-source venv/bin/activate   # if not already active
-uvicorn api:app --reload --port 8000
+```text
+Diabetic Retinopathy Detection/
++-- README.md
++-- SUMMARY.md
++-- DIABETIC_RETINOPATHY_CASE_STUDY.md
++-- Feature_Engineering_Modeling_Report.md
++-- HOW_IT_WORKS.md
++-- feature_engineering.py
++-- train_hybrid_model.py
++-- app/
+    +-- app.py
+    +-- api.py
+    +-- inference.py
+    +-- preprocessing.py
+    +-- requirements.txt
+    +-- model/
+    |   +-- dr_model_traced.pt
+    +-- sample_images/
 ```
 
-Then in another terminal:
+Key files:
 
-```bash
-curl -X POST http://localhost:8000/predict \
-  -F "file=@/path/to/some_fundus_image.png"
-```
-
-Or visit `http://localhost:8000/docs` for an interactive Swagger UI to test
-the endpoint by uploading a file directly in the browser.
-
----
-
-## 7. Troubleshooting
-
-| Problem | Fix |
+| File | Purpose |
 |---|---|
-| `Model not found at .../dr_model_traced.pt` | You haven't completed Part A (training) and Part B step 2 (placing the file). Re-check the exact path: `app/model/dr_model_traced.pt`. |
-| Colab: "No GPU detected" warning in Section 1 | Runtime → Change runtime type → set Hardware accelerator to T4 GPU → Save → re-run from the top. |
-| Dataset folder is bigger than 4GB | In Section 2's resize cell, lower `MAX_DIM` from `512` to `384` (or `256`), then re-run the download + extract cells. Smaller images still work fine for EfficientNet-B0 at 224×224 input. |
-| Kaggle download fails / 403 error | Make sure you've accepted the competition rules at the [APTOS 2019 Kaggle page](https://www.kaggle.com/c/aptos2019-blindness-detection/rules) — Kaggle blocks API downloads until you've clicked "I Understand and Accept" on that page, even with a valid token. |
-| Streamlit app is slow (~1-2s per prediction) | Expected on CPU — EfficientNet-B0 CPU inference is roughly 500-900ms per image plus preprocessing overhead. This is fine for a live single-image demo. If you need it faster, retrain with `BACKBONE = 'mobilenet_v2'` in the notebook (Section 5). |
-| `cv2.imread` / preprocessing errors on a specific image | Make sure the uploaded file is a standard PNG/JPG fundus photo, not a PDF, HEIC, or corrupted file. |
-| Predictions look wrong / inconsistent with training metrics | Double-check `app/preprocessing.py` hasn't been edited separately from the notebook's Section 3 — they must stay identical, since the model was trained on Ben-Graham-processed images specifically. |
+| `README.md` | Main project introduction and setup guide |
+| `SUMMARY.md` | Updated simple explanation of how the full system works, including new terms and features |
+| `DIABETIC_RETINOPATHY_CASE_STUDY.md` | Problem background, clinical motivation, dataset, method, and expected impact |
+| `Feature_Engineering_Modeling_Report.md` | Detailed feature-engineering and modeling strategy |
+| `feature_engineering.py` | Extracts handcrafted fundus features from eye images |
+| `train_hybrid_model.py` | Trains a CNN + engineered-feature hybrid model |
+| `app/app.py` | Streamlit demo interface |
+| `app/inference.py` | Loads the trained model and runs predictions |
+| `app/preprocessing.py` | Ben Graham preprocessing used before prediction |
 
 ---
 
+## Current model pipeline
+
+The original baseline works like this:
+
+```text
+Fundus image
+    ↓
+Ben Graham preprocessing
+    ↓
+EfficientNet-B0 CNN
+    ↓
+Single ordinal regression output
+    ↓
+Grade 0-4 + confidence + manual-review flag
+```
+
+The improved hybrid training plan works like this:
+
+```text
+Fundus image
+    ↓
+Ben Graham preprocessing
+    ↓
+Two parallel paths
+    ├── CNN path: EfficientNet-B0 learns deep visual features
+    └── Feature path: handcrafted fundus features are extracted
+            ↓
+CNN features + engineered features are joined
+            ↓
+Fusion model predicts DR grade
+            ↓
+QWK-optimized thresholds convert score into grade 0-4
+```
 
 ---
 
-## 8. Disclaimer
+## New feature-engineering additions
 
-This is a hackathon prototype for demonstration and educational purposes only.
-It is **not** a certified or validated medical device, has not undergone clinical
-trials, and must not be used for actual patient diagnosis or treatment decisions.
-The confidence-based manual-review flagging is a design pattern for responsible
-ML UX, not a substitute for clinical judgment.
+The new `feature_engineering.py` file extracts extra signals from each fundus image. These features are meant to help the model see useful medical-style clues instead of relying only on the CNN.
+
+Feature groups include:
+
+| Feature group | Examples | Why it helps |
+|---|---|---|
+| Image quality | sharpness, entropy, illumination variation, field-of-view ratio | Detects blurry or poor-quality images |
+| Color statistics | RGB mean, standard deviation, percentile values | Captures global color and contrast differences |
+| Vessel features | vessel density, vessel component density | Retinal vessel changes can correlate with disease |
+| Dark lesion candidates | small dark candidate count, larger dark candidate area | May capture microaneurysm/hemorrhage-like patterns |
+| Bright lesion candidates | bright/yellow candidate count and area | May capture exudate-like patterns |
+| Texture features | Local Binary Pattern histogram | Captures fine local texture patterns |
+
+These are called candidates, not confirmed lesions. Classical image processing can make mistakes, so the features must be tested through ablation.
+
+---
+
+## Training workflow in Google Colab
+
+Use the notebook first to prepare data and train.
+
+1. Open the training notebook in Google Colab.
+2. Turn on GPU: `Runtime -> Change runtime type -> T4 GPU`.
+3. Install required packages.
+4. Download the APTOS dataset from Kaggle.
+5. Create the dataframe `df` with:
+   - `id_code`
+   - `diagnosis`
+   - `img_path`
+6. Upload or copy these two files into Colab:
+   - `feature_engineering.py`
+   - `train_hybrid_model.py`
+7. Run feature extraction and save `aptos_features.csv`.
+8. Merge extracted features into `df`.
+9. Split data into train and validation sets.
+10. Train the CNN-only baseline.
+11. Train the hybrid CNN + engineered-feature model.
+12. Compare results using QWK and accuracy.
+13. Keep the hybrid model only if it improves repeatably across seeds/folds.
+
+If you get `NameError: name 'df' is not defined`, it means the notebook does not currently remember the dataframe. Re-run the earlier cell that loads `train.csv` and creates `df["img_path"]`.
+
+---
+
+## Local demo workflow
+
+After training, the app can run locally.
+
+1. Put the trained model file in:
+
+```text
+app/model/dr_model_traced.pt
+```
+
+2. Install app dependencies:
+
+```bash
+cd app
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+3. Run Streamlit:
+
+```bash
+streamlit run app.py
+```
+
+4. Open the browser URL shown by Streamlit.
+5. Upload a retinal fundus image.
+6. Read the predicted grade, confidence, and manual-review warning.
+
+Note: the current Streamlit app expects the older one-input TorchScript model. The new hybrid model needs image input plus engineered features, so the app inference code must be updated before deploying the hybrid model.
+
+---
+
+## Evaluation metrics
+
+The most important metric is QWK.
+
+| Metric | Meaning |
+|---|---|
+| Accuracy | Percentage of images where predicted grade equals true grade |
+| QWK | Quadratic Weighted Kappa; gives smaller punishment for near misses and larger punishment for far mistakes |
+| Confusion matrix | Shows which grades the model confuses |
+| Ablation result | Shows whether a new feature group actually helps |
+
+For diabetic retinopathy, QWK is more useful than plain accuracy because Grade 2 predicted as Grade 3 is less severe than Grade 0 predicted as Grade 4.
+
+---
+
+## Responsible-use warning
+
+This project should be presented as a screening-assistance prototype, not a doctor replacement.
+
+The app should always show:
+
+- This is not a diagnosis.
+- A trained medical professional must review real patient cases.
+- Low-confidence or poor-quality images should be manually reviewed.
+- Model results may be wrong, especially outside the APTOS-style dataset.
+
+---
+
+## Recommended next steps
+
+1. Fix the notebook setup issue by making sure `df` is created before feature extraction.
+2. Run feature extraction once and cache `aptos_features.csv`.
+3. Train CNN-only and hybrid models on the same split.
+4. Compare QWK, accuracy, and confusion matrices.
+5. Repeat with multiple random seeds.
+6. Update `app/inference.py` only after deciding which model is best.
+7. Add image-quality warnings to the Streamlit app.
+8. Add a visible medical disclaimer on every result screen.

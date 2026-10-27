@@ -206,3 +206,5 @@ def save_inference_metadata(path, feature_columns: Sequence[str], mean, std, thr
         "feature_std": std.tolist(), "thresholds": thresholds.tolist(),
         "image_size": image_size,
     }, indent=2), encoding="utf-8")
+
+# add own weights for high precision and recall for class 4 (proliferative DR) in the weighted random sampler
